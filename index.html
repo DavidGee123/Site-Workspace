@@ -473,17 +473,23 @@
   const playerStatus = document.getElementById('playerStatus');
   const hidePlayerBtn = document.getElementById('hidePlayerBtn');
 
-  const STORAGE_KEY = 'dark_multi_site_workspace_v5';
+  const STORAGE_KEY = 'dark_multi_site_workspace_v6';
+
+  const BG_DB_NAME = 'dark_multi_site_workspace_background_db';
+  const BG_DB_VERSION = 1;
+  const BG_STORE = 'files';
+  const BG_KEY = 'background-image';
 
   let state = loadState();
   let zIndex = 10;
   let nextId = state.nextId || 1;
+  let bgObjectUrl = '';
 
   function defaultState() {
     return {
       panels: [],
       player: { hidden: false, url: '', x: null, y: null, w: 420, h: 236 },
-      bg: { color: '#0b0f14', image: '' },
+      bg: { color: '#0b0f14', hasImage: false },
       drafts: { title: '', url: '', playerUrl: '' },
       nextId: 1
     };
@@ -494,12 +500,22 @@
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return defaultState();
       const parsed = JSON.parse(raw);
+
       return {
         ...defaultState(),
         ...parsed,
-        bg: { ...defaultState().bg, ...(parsed.bg || {}) },
-        player: { ...defaultState().player, ...(parsed.player || {}) },
-        drafts: { ...defaultState().drafts, ...(parsed.drafts || {}) }
+        bg: {
+          ...defaultState().bg,
+          ...(parsed.bg || {})
+        },
+        player: {
+          ...defaultState().player,
+          ...(parsed.player || {})
+        },
+        drafts: {
+          ...defaultState().drafts,
+          ...(parsed.drafts || {})
+        }
       };
     } catch {
       return defaultState();
@@ -508,7 +524,12 @@
 
   function saveState() {
     state.nextId = nextId;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch (err) {
+      console.error('Failed to save workspace state:', err);
+    }
+
     if (state.bg?.color) {
       document.querySelector('meta[name="theme-color"]')?.setAttribute('content', state.bg.color);
     }
@@ -569,18 +590,117 @@
     emptyState.style.display = workspace.querySelector('.panel') ? 'none' : 'grid';
   }
 
+  function revokeBgObjectUrl() {
+    if (bgObjectUrl) {
+      URL.revokeObjectURL(bgObjectUrl);
+      bgObjectUrl = '';
+    }
+  }
+
   function applyBackground() {
     const color = state.bg?.color || '#0b0f14';
-    const image = state.bg?.image || '';
-
     document.body.style.backgroundColor = color;
-    document.body.style.backgroundImage = image ? `url("${image}")` : 'none';
-    document.body.style.backgroundRepeat = image ? 'no-repeat' : '';
-    document.body.style.backgroundPosition = image ? 'center center' : '';
-    document.body.style.backgroundSize = image ? 'cover' : '';
     bgColor.value = color;
-
     document.querySelector('meta[name="theme-color"]')?.setAttribute('content', color);
+
+    if (!bgObjectUrl) {
+      document.body.style.backgroundImage = 'none';
+      document.body.style.backgroundRepeat = '';
+      document.body.style.backgroundPosition = '';
+      document.body.style.backgroundSize = '';
+    }
+  }
+
+  function setBackgroundFromBlob(blob) {
+    revokeBgObjectUrl();
+
+    if (!blob) {
+      document.body.style.backgroundImage = 'none';
+      document.body.style.backgroundRepeat = '';
+      document.body.style.backgroundPosition = '';
+      document.body.style.backgroundSize = '';
+      state.bg.hasImage = false;
+      saveState();
+      return;
+    }
+
+    bgObjectUrl = URL.createObjectURL(blob);
+    document.body.style.backgroundImage = `url("${bgObjectUrl}")`;
+    document.body.style.backgroundRepeat = 'no-repeat';
+    document.body.style.backgroundPosition = 'center center';
+    document.body.style.backgroundSize = 'cover';
+    state.bg.hasImage = true;
+    saveState();
+  }
+
+  function openBgDb() {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(BG_DB_NAME, BG_DB_VERSION);
+
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains(BG_STORE)) {
+          db.createObjectStore(BG_STORE);
+        }
+      };
+
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  async function setBgImageBlob(blob) {
+    const db = await openBgDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(BG_STORE, 'readwrite');
+      const store = tx.objectStore(BG_STORE);
+      const req = store.put(blob, BG_KEY);
+
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+
+      tx.oncomplete = () => db.close();
+      tx.onerror = () => {
+        db.close();
+        reject(tx.error);
+      };
+    });
+  }
+
+  async function getBgImageBlob() {
+    const db = await openBgDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(BG_STORE, 'readonly');
+      const store = tx.objectStore(BG_STORE);
+      const req = store.get(BG_KEY);
+
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+
+      tx.oncomplete = () => db.close();
+      tx.onerror = () => {
+        db.close();
+        reject(tx.error);
+      };
+    });
+  }
+
+  async function clearBgImageBlob() {
+    const db = await openBgDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(BG_STORE, 'readwrite');
+      const store = tx.objectStore(BG_STORE);
+      const req = store.delete(BG_KEY);
+
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+
+      tx.oncomplete = () => db.close();
+      tx.onerror = () => {
+        db.close();
+        reject(tx.error);
+      };
+    });
   }
 
   function syncPanelRecordFromElement(id, panel, input) {
@@ -859,23 +979,32 @@
     saveState();
   });
 
-  bgImage.addEventListener('change', () => {
+  bgImage.addEventListener('change', async () => {
     const file = bgImage.files && bgImage.files[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = () => {
+    try {
+      await setBgImageBlob(file);
       state.bg = state.bg || {};
-      state.bg.image = String(reader.result || '');
-      applyBackground();
-      saveState();
-    };
-    reader.readAsDataURL(file);
+      state.bg.hasImage = true;
+      setBackgroundFromBlob(file);
+    } catch (err) {
+      console.error('Failed to save background image:', err);
+      alert('The background image could not be saved.');
+    }
   });
 
-  clearBgBtn.addEventListener('click', () => {
-    state.bg = { color: bgColor.value || '#0b0f14', image: '' };
+  clearBgBtn.addEventListener('click', async () => {
+    try {
+      await clearBgImageBlob();
+    } catch (err) {
+      console.error('Failed to clear background image:', err);
+    }
+
+    state.bg = state.bg || {};
+    state.bg.hasImage = false;
     bgImage.value = '';
+    revokeBgObjectUrl();
     applyBackground();
     saveState();
   });
@@ -928,8 +1057,27 @@
   window.addEventListener('pagehide', saveState);
   window.addEventListener('beforeunload', saveState);
 
+  async function restoreBackground() {
+    applyBackground();
+
+    if (state.bg?.hasImage) {
+      try {
+        const blob = await getBgImageBlob();
+        if (blob) {
+          setBackgroundFromBlob(blob);
+        } else {
+          state.bg.hasImage = false;
+          saveState();
+        }
+      } catch (err) {
+        console.error('Failed to restore background image:', err);
+        state.bg.hasImage = false;
+        saveState();
+      }
+    }
+  }
+
   document.title = 'Multi-Window Workspace';
-  applyBackground();
 
   siteTitle.value = state.drafts?.title || '';
   siteUrl.value = state.drafts?.url || '';
@@ -951,8 +1099,10 @@
   }
 
   if (state.bg?.color) bgColor.value = state.bg.color;
+
   initPlayerDragging();
   updateEmptyState();
+  restoreBackground();
 })();
 </script>
 </body>

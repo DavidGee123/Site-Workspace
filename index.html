@@ -52,7 +52,7 @@
       background: rgba(17,22,29,.82);
       box-shadow: var(--shadow);
       backdrop-filter: blur(12px);
-      width: min(820px, calc(100vw - 28px));
+      width: min(720px, calc(100vw - 28px));
     }
 
     .topbar input {
@@ -320,9 +320,8 @@
       z-index: 9999;
       resize: both;
       backdrop-filter: blur(12px);
-      user-select: none;
     }
-    .player.hidden { display: none !important; }
+    .player.hidden { display: none; }
 
     .player-header {
       height: 40px;
@@ -334,10 +333,8 @@
       border-bottom: 1px solid rgba(148,163,184,.14);
       cursor: grab;
       user-select: none;
-      touch-action: none;
     }
     .player-header:active { cursor: grabbing; }
-
     .player-header .meta {
       display: grid;
       gap: 1px;
@@ -347,14 +344,12 @@
       color: var(--muted);
       font-size: 11px;
     }
-
     .player-content {
       height: calc(100% - 40px);
       display: flex;
       flex-direction: column;
       min-height: 0;
     }
-
     .player-controls {
       display: flex;
       gap: 6px;
@@ -383,7 +378,6 @@
       background: linear-gradient(135deg, rgba(124,58,237,.96), rgba(99,102,241,.92));
       cursor: pointer;
     }
-
     .player-frame {
       flex: 1;
       min-height: 0;
@@ -393,7 +387,7 @@
     }
 
     @media (max-width: 700px) {
-      .topbar { width: calc(100vw - 28px); flex-wrap: wrap; }
+      .topbar { width: calc(100vw - 28px); }
       .panel { width: calc(100vw - 28px); height: 55vh; }
       .player { width: calc(100vw - 28px); }
     }
@@ -480,31 +474,36 @@
   const playerStatus = document.getElementById('playerStatus');
   const hidePlayerBtn = document.getElementById('hidePlayerBtn');
 
-  const STORAGE_KEY = 'dark_multi_site_workspace_v3';
+  const STORAGE_KEY = 'dark_multi_site_workspace_v4';
 
   let state = loadState();
   let zIndex = 10;
   let nextId = state.nextId || 1;
 
+  function defaultState() {
+    return {
+      panels: [],
+      player: { hidden: false, url: '', x: null, y: null, w: 420, h: 236 },
+      bg: { color: '#0b0f14', image: '' },
+      drafts: { title: '', url: '', playerUrl: '' },
+      nextId: 1
+    };
+  }
+
   function loadState() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) {
-        return {
-          panels: [],
-          player: { hidden: false, url: '', x: null, y: null, w: 420, h: 236 },
-          bg: { color: '#0b0f14', image: '' },
-          nextId: 1
-        };
-      }
-      return JSON.parse(raw);
-    } catch {
+      if (!raw) return defaultState();
+      const parsed = JSON.parse(raw);
       return {
-        panels: [],
-        player: { hidden: false, url: '', x: null, y: null, w: 420, h: 236 },
-        bg: { color: '#0b0f14', image: '' },
-        nextId: 1
+        ...defaultState(),
+        ...parsed,
+        bg: { ...defaultState().bg, ...(parsed.bg || {}) },
+        player: { ...defaultState().player, ...(parsed.player || {}) },
+        drafts: { ...defaultState().drafts, ...(parsed.drafts || {}) }
       };
+    } catch {
+      return defaultState();
     }
   }
 
@@ -581,6 +580,17 @@
     }
   }
 
+  function syncPanelRecordFromElement(id, panel, input) {
+    const record = state.panels.find(p => p.id === id);
+    if (!record) return;
+    record.title = panel.querySelector('.name').textContent;
+    record.url = input.value;
+    record.x = Math.round(parseFloat(panel.style.left) || panel.offsetLeft || 0);
+    record.y = Math.round(parseFloat(panel.style.top) || panel.offsetTop || 0);
+    record.w = Math.round(parseFloat(panel.style.width) || panel.offsetWidth || 0);
+    record.h = Math.round(parseFloat(panel.style.height) || panel.offsetHeight || 0);
+  }
+
   function addPanel({ title, url, x, y, w, h }) {
     const id = nextId++;
     const panel = document.createElement('section');
@@ -625,14 +635,8 @@
     const goBtn = panel.querySelector('.go');
 
     function syncSaved() {
-      const record = state.panels.find(p => p.id === id);
-      if (!record) return;
-      record.title = panel.querySelector('.name').textContent;
-      record.url = input.value;
-      record.x = parseInt(panel.style.left, 10);
-      record.y = parseInt(panel.style.top, 10);
-      record.w = parseInt(panel.style.width, 10);
-      record.h = parseInt(panel.style.height, 10);
+      syncPanelRecordFromElement(id, panel, input);
+      saveState();
     }
 
     function setUrl(newUrl) {
@@ -643,7 +647,6 @@
       panel.querySelector('.small').textContent = normalized;
       iframe.src = normalized;
       syncSaved();
-      saveState();
     }
 
     iframe.src = safeUrl;
@@ -674,6 +677,8 @@
     panel.addEventListener('pointerdown', () => {
       panel.style.zIndex = ++zIndex;
       player.style.zIndex = 9999;
+      panel.classList.add('focused');
+      setTimeout(() => panel.classList.remove('focused'), 180);
     });
 
     makeDraggable(panel, header, syncSaved);
@@ -752,7 +757,11 @@
       onResize && onResize();
     });
     observer.observe(el);
-    window.addEventListener('beforeunload', onResize);
+
+    window.addEventListener('beforeunload', () => {
+      onResize && onResize();
+      saveState();
+    });
   }
 
   function loadPlayer(url) {
@@ -763,22 +772,16 @@
     playerFrame.src = embed;
     playerStatus.textContent = isYouTube(normalized) ? 'Playing YouTube embed' : 'Playing embedded video';
     playerUrl.value = normalized;
+
     player.classList.remove('hidden');
     state.player.hidden = false;
     state.player.url = normalized;
     saveState();
   }
 
-  function closePlayer() {
-    playerFrame.src = 'about:blank';
-    player.classList.add('hidden');
-    state.player.hidden = true;
-    state.player.url = '';
-    saveState();
-  }
-
   function initPlayerDragging() {
     const header = playerHeader;
+    let dragging = false, startX = 0, startY = 0, startLeft = 0, startTop = 0;
 
     const pos = state.player || {};
     if (typeof pos.x === 'number' && typeof pos.y === 'number') {
@@ -790,57 +793,38 @@
     if (pos.w) player.style.width = pos.w + 'px';
     if (pos.h) player.style.height = pos.h + 'px';
 
-    let dragging = false;
-    let startX = 0, startY = 0, startLeft = 0, startTop = 0;
-    let pointerId = null;
-
-    const onMove = (e) => {
-      if (!dragging || e.pointerId !== pointerId) return;
-      const dx = e.clientX - startX;
-      const dy = e.clientY - startY;
-
-      const left = Math.max(0, startLeft + dx);
-      const top = Math.max(0, startTop + dy);
-
-      player.style.left = `${left}px`;
-      player.style.top = `${top}px`;
-      player.style.right = 'auto';
-      player.style.bottom = 'auto';
-
-      state.player.x = left;
-      state.player.y = top;
-      saveState();
-    };
-
-    const endDrag = (e) => {
-      if (pointerId === null || e.pointerId !== pointerId) return;
-      dragging = false;
-      try { header.releasePointerCapture(pointerId); } catch {}
-      pointerId = null;
-      saveState();
-      document.removeEventListener('pointermove', onMove);
-      document.removeEventListener('pointerup', endDrag);
-      document.removeEventListener('pointercancel', endDrag);
-    };
-
     header.addEventListener('pointerdown', (e) => {
       if (e.target.closest('button')) return;
-
       dragging = true;
-      pointerId = e.pointerId;
       player.style.zIndex = 10000;
-
       const rect = player.getBoundingClientRect();
       startX = e.clientX;
       startY = e.clientY;
       startLeft = rect.left;
       startTop = rect.top;
-
-      try { header.setPointerCapture(pointerId); } catch {}
-      document.addEventListener('pointermove', onMove);
-      document.addEventListener('pointerup', endDrag);
-      document.addEventListener('pointercancel', endDrag);
+      header.setPointerCapture(e.pointerId);
       e.preventDefault();
+    });
+
+    header.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      const left = Math.max(0, startLeft + dx);
+      const top = Math.max(0, startTop + dy);
+      player.style.left = `${left}px`;
+      player.style.top = `${top}px`;
+      player.style.right = 'auto';
+      player.style.bottom = 'auto';
+      state.player.x = left;
+      state.player.y = top;
+      saveState();
+    });
+
+    header.addEventListener('pointerup', (e) => {
+      dragging = false;
+      try { header.releasePointerCapture(e.pointerId); } catch {}
+      saveState();
     });
 
     const playerResizeObs = new ResizeObserver(() => {
@@ -897,8 +881,12 @@
     const url = normalizeUrl(siteUrl.value);
     if (!url) return;
     addPanel({ title: siteTitle.value.trim() || toTitle(url), url });
+
     siteTitle.value = '';
     siteUrl.value = '';
+    state.drafts.title = '';
+    state.drafts.url = '';
+    saveState();
   });
 
   siteUrl.addEventListener('keydown', (e) => {
@@ -908,21 +896,43 @@
     if (e.key === 'Enter') siteUrl.focus();
   });
 
+  // Save drafts so reopening the tab brings back what was typed.
+  siteTitle.addEventListener('input', () => {
+    state.drafts.title = siteTitle.value;
+    saveState();
+  });
+  siteUrl.addEventListener('input', () => {
+    state.drafts.url = siteUrl.value;
+    saveState();
+  });
+  playerUrl.addEventListener('input', () => {
+    state.drafts.playerUrl = playerUrl.value;
+    saveState();
+  });
+
   loadVideoBtn.addEventListener('click', () => loadPlayer(siteUrl.value || playerUrl.value));
   playerLoadBtn.addEventListener('click', () => loadPlayer(playerUrl.value));
+
   playerUrl.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') loadPlayer(playerUrl.value);
   });
 
-  hidePlayerBtn.addEventListener('click', closePlayer);
-
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !player.classList.contains('hidden')) {
-      closePlayer();
-    }
+  hidePlayerBtn.addEventListener('click', () => {
+    player.classList.add('hidden');
+    state.player.hidden = true;
+    saveState();
   });
 
+  // Extra safety: save on page hide / unload.
+  window.addEventListener('pagehide', saveState);
+  window.addEventListener('beforeunload', saveState);
+
+  // Restore UI
   applyBackground();
+
+  siteTitle.value = state.drafts?.title || '';
+  siteUrl.value = state.drafts?.url || '';
+  playerUrl.value = state.drafts?.playerUrl || '';
 
   if (state.player && state.player.url) {
     playerUrl.value = state.player.url;

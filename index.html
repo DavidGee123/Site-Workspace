@@ -4,6 +4,11 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Multi-Window Workspace</title>
+
+  <link rel="icon" type="image/png" href="assets/icon.png" />
+  <link rel="apple-touch-icon" href="assets/icon.png" />
+  <meta name="theme-color" content="#0b0f14" />
+
   <style>
     :root{
       --bg:#0b0f14;
@@ -24,12 +29,6 @@
       color: var(--text);
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       overflow: hidden;
-    }
-
-    body.bg-image {
-      background-size: cover;
-      background-position: center;
-      background-repeat: no-repeat;
     }
 
     .workspace {
@@ -474,7 +473,7 @@
   const playerStatus = document.getElementById('playerStatus');
   const hidePlayerBtn = document.getElementById('hidePlayerBtn');
 
-  const STORAGE_KEY = 'dark_multi_site_workspace_v4';
+  const STORAGE_KEY = 'dark_multi_site_workspace_v5';
 
   let state = loadState();
   let zIndex = 10;
@@ -510,6 +509,9 @@
   function saveState() {
     state.nextId = nextId;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    if (state.bg?.color) {
+      document.querySelector('meta[name="theme-color"]')?.setAttribute('content', state.bg.color);
+    }
   }
 
   function normalizeUrl(input) {
@@ -568,16 +570,17 @@
   }
 
   function applyBackground() {
-    document.body.style.backgroundColor = state.bg?.color || '#0b0f14';
-    bgColor.value = state.bg?.color || '#0b0f14';
+    const color = state.bg?.color || '#0b0f14';
+    const image = state.bg?.image || '';
 
-    if (state.bg?.image) {
-      document.body.classList.add('bg-image');
-      document.body.style.backgroundImage = `url("${state.bg.image}")`;
-    } else {
-      document.body.classList.remove('bg-image');
-      document.body.style.backgroundImage = 'none';
-    }
+    document.body.style.backgroundColor = color;
+    document.body.style.backgroundImage = image ? `url("${image}")` : 'none';
+    document.body.style.backgroundRepeat = image ? 'no-repeat' : '';
+    document.body.style.backgroundPosition = image ? 'center center' : '';
+    document.body.style.backgroundSize = image ? 'cover' : '';
+    bgColor.value = color;
+
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', color);
   }
 
   function syncPanelRecordFromElement(id, panel, input) {
@@ -836,7 +839,6 @@
     playerResizeObs.observe(player);
   }
 
-  // Settings logic
   settingsBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     settingsPanel.classList.toggle('open');
@@ -845,7 +847,7 @@
   closeSettingsBtn.addEventListener('click', () => settingsPanel.classList.remove('open'));
 
   document.addEventListener('click', (e) => {
-    if (!settingsPanel.contains(e.target) && e.target !== settingsBtn) {
+    if (!settingsPanel.contains(e.target) && e.target !== settingsBtn && !settingsBtn.contains(e.target)) {
       settingsPanel.classList.remove('open');
     }
   });
@@ -860,6 +862,7 @@
   bgImage.addEventListener('change', () => {
     const file = bgImage.files && bgImage.files[0];
     if (!file) return;
+
     const reader = new FileReader();
     reader.onload = () => {
       state.bg = state.bg || {};
@@ -872,8 +875,8 @@
 
   clearBgBtn.addEventListener('click', () => {
     state.bg = { color: bgColor.value || '#0b0f14', image: '' };
-    applyBackground();
     bgImage.value = '';
+    applyBackground();
     saveState();
   });
 
@@ -896,7 +899,6 @@
     if (e.key === 'Enter') siteUrl.focus();
   });
 
-  // Save drafts so reopening the tab brings back what was typed.
   siteTitle.addEventListener('input', () => {
     state.drafts.title = siteTitle.value;
     saveState();
@@ -923,11 +925,10 @@
     saveState();
   });
 
-  // Extra safety: save on page hide / unload.
   window.addEventListener('pagehide', saveState);
   window.addEventListener('beforeunload', saveState);
 
-  // Restore UI
+  document.title = 'Multi-Window Workspace';
   applyBackground();
 
   siteTitle.value = state.drafts?.title || '';
